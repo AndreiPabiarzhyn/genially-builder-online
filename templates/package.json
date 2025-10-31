@@ -1,0 +1,22 @@
+{
+  "name": "genially-app",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder build --win portable"
+  },
+  "build": {
+    "appId": "com.genially.offline",
+    "asar": true,
+    "forceCodeSigning": false,
+    "win": {
+      "target": "portable",
+      "icon": "favicon.ico"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "24.4.0"
+  }
+}
