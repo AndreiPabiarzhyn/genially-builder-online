@@ -1,0 +1,101 @@
+name: Build Genially EXE
+
+on:
+  push:
+    paths:
+      - 'uploads/*.zip'
+  workflow_dispatch:
+    inputs:
+      zip_path:
+        description: 'Path to ZIP inside repo (e.g. uploads/my.zip)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve ZIP path
+        id: zippath
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.zip_path }}" ]; then
+            echo "ZIP=${{ github.event.inputs.zip_path }}" >> $GITHUB_OUTPUT
+          else
+            # find last changed zip in uploads
+            ZIP=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} | grep -E '^uploads/.*\.zip$' | tail -n1 || true)
+            if [ -z "$ZIP" ]; then
+              # fallback: latest zip by mtime
+              ZIP=$(ls -t uploads/*.zip 2>/dev/null | head -n1 || true)
+            fi
+            echo "ZIP=$ZIP" >> $GITHUB_OUTPUT
+          fi
+          echo "Using ZIP=$ZIP"
+
+      - name: Fail if not found
+        if: steps.zippath.outputs.ZIP == ''
+        run: |
+          echo "No ZIP found. Upload a file to uploads/ or provide zip_path input."
+          exit 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Prepare work dir
+        shell: bash
+        run: |
+          mkdir work
+          7z x "${{ steps.zippath.outputs.ZIP }}" -owork -y || true
+          # if content is inside single top folder, move it up
+          entries=$(ls work | wc -l)
+          if [ "$entries" -eq 1 ]; then
+            inner=$(ls work)
+            shopt -s dotglob
+            mv "work/$inner/"* work/ || true
+            rmdir "work/$inner" || true
+          fi
+
+      - name: Add Electron templates
+        shell: bash
+        run: |
+          cp templates/main.js work/main.js
+          cp templates/package.json work/package.json
+          # add icon if exists in repo
+          if [ -f assets/kodland-logo.png ]; then
+            cp assets/kodland-logo.png work/favicon.ico || true
+          fi
+
+      - name: Install deps
+        working-directory: work
+        run: npm ci || npm install
+
+      - name: Build portable EXE
+        working-directory: work
+        run: npm run dist
+
+      - name: Rename EXE with date and archive name
+        id: rename
+        shell: bash
+        working-directory: work
+        run: |
+          NAME=$(basename "${{ steps.zippath.outputs.ZIP }}" .zip)
+          DATE=$(date +%Y-%m-%d)
+          EXE=$(ls dist/*.exe | head -n1)
+          TARGET="GeniallyApp_${NAME}_${DATE}.exe"
+          mv "$EXE" "dist/$TARGET"
+          echo "FILENAME=$TARGET" >> $GITHUB_OUTPUT
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Genially build ${{ github.run_number }}"
+          files: |
+            work/dist/${{ steps.rename.outputs.FILENAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
